@@ -1,6 +1,6 @@
 [package]
 name = "ip-discovery"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 rust-version = "1.85"
 description = "A lightweight, high-performance library for detecting public IP addresses via DNS, HTTP, and STUN protocols"
@@ -13,6 +13,10 @@ authors = ["zer0horizon"]
 keywords = ["ip", "public-ip", "stun", "dns", "network"]
 categories = ["network-programming"]
 exclude = ["target/", ".github/"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["dns", "http", "stun"]
