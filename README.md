@@ -155,7 +155,7 @@ cargo run --example benchmark
 
 ## MSRV
 
-Rust **1.75** or later.
+Rust **1.82** or later.
 
 ## License
 
