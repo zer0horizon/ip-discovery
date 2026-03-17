@@ -1,8 +1,8 @@
 [package]
 name = "ip-discovery"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.85"
 description = "A lightweight, high-performance library for detecting public IP addresses via DNS, HTTP, and STUN protocols"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/zer0horizon/ip-discovery"
