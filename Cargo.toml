@@ -1,0 +1,37 @@
+[package]
+name = "ip-discovery"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "A lightweight, high-performance library for detecting public IP addresses via DNS, HTTP, and STUN protocols"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zer0horizon/ip-discovery"
+homepage = "https://github.com/zer0horizon/ip-discovery"
+documentation = "https://docs.rs/ip-discovery"
+readme = "README.md"
+authors = ["zer0horizon"]
+keywords = ["ip", "public-ip", "stun", "dns", "network"]
+categories = ["network-programming"]
+exclude = ["target/", ".github/"]
+
+[features]
+default = ["dns", "http", "stun"]
+dns = []
+http = ["dep:reqwest"]
+stun = []
+native-tls = ["reqwest?/native-tls"]
+
+[dependencies]
+thiserror = "2"
+tokio = { version = "1", features = ["net", "time"] }
+async-trait = "0.1"
+tracing = "0.1"
+getrandom = { version = "0.2", features = ["std"] }
+futures-util = "0.3"
+
+# Optional - HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "macros"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
