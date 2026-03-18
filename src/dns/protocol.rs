@@ -125,8 +125,10 @@ pub fn parse_response(data: &[u8], record_type: RecordType) -> Result<Vec<String
         return Err("DNS error response");
     }
 
+    // Get question count
+    let qdcount = u16::from_be_bytes([data[4], data[5]]);
     // Get answer count
-    let ancount = u16::from_be_bytes([data[4], data[5]]);
+    let ancount = u16::from_be_bytes([data[6], data[7]]);
     if ancount == 0 {
         return Err("no answers in response");
     }
@@ -134,18 +136,14 @@ pub fn parse_response(data: &[u8], record_type: RecordType) -> Result<Vec<String
     // Skip header (12 bytes) and question section
     let mut pos = 12;
 
-    // Skip question section (find the null terminator, then skip QTYPE and QCLASS)
-    while pos < data.len() && data[pos] != 0 {
-        let label_len = data[pos] as usize;
-        pos += 1 + label_len;
-        if pos > data.len() {
-            return Err("malformed question section");
+    // Skip question sections
+    for _ in 0..qdcount {
+        pos = skip_name(data, pos)?;
+        if pos + 4 > data.len() {
+            return Err("truncated question section");
         }
+        pos += 4; // Skip QTYPE (2) + QCLASS (2)
     }
-    if pos >= data.len() {
-        return Err("truncated question section");
-    }
-    pos += 1 + 4; // Skip null terminator + QTYPE (2) + QCLASS (2)
 
     let mut results = Vec::new();
 
@@ -196,6 +194,8 @@ pub fn parse_response(data: &[u8], record_type: RecordType) -> Result<Vec<String
                                 txt.push_str(s);
                             }
                             txt_pos += len;
+                        } else {
+                            break;
                         }
                     }
                     if !txt.is_empty() {
