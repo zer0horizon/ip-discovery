@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-03-18
+
+### Changed
+
+- **BREAKING:** `http` feature is no longer enabled by default. Only `dns` and `stun` are default, keeping the crate zero-dependency for network libraries. Enable HTTP explicitly with `features = ["http"]` or use `features = ["all"]`.
+- Added `all` convenience feature to enable all protocols
+
+### Fixed
+
+- Fix `ancount` read from wrong DNS header offset (was reading `qdcount` at bytes 4-5 instead of `ancount` at bytes 6-7)
+- Fix question section skipping to handle compression pointers and multiple questions via `qdcount` loop
+- Fix infinite loop in TXT record parsing when text-length exceeds `rdlength` bounds
+
+## [0.1.5] - 2026-03-18 [yanked]
+
+### Fixed
+
+- Fix `ancount` read from wrong DNS header offset (was reading `qdcount` at bytes 4-5 instead of `ancount` at bytes 6-7)
+- Fix question section skipping to handle compression pointers and multiple questions via `qdcount` loop
+- Fix infinite loop in TXT record parsing when text-length exceeds `rdlength` bounds
+
 ## [0.1.4] - 2026-03-17
 
 ### Fixed

@@ -125,8 +125,10 @@ pub fn parse_response(data: &[u8], record_type: RecordType) -> Result<Vec<String
         return Err("DNS error response");
     }
 
+    // Get question count
+    let qdcount = u16::from_be_bytes([data[4], data[5]]);
     // Get answer count
-    let ancount = u16::from_be_bytes([data[4], data[5]]);
+    let ancount = u16::from_be_bytes([data[6], data[7]]);
     if ancount == 0 {
         return Err("no answers in response");
     }
@@ -134,18 +136,14 @@ pub fn parse_response(data: &[u8], record_type: RecordType) -> Result<Vec<String
     // Skip header (12 bytes) and question section
     let mut pos = 12;
 
-    // Skip question section (find the null terminator, then skip QTYPE and QCLASS)
-    while pos < data.len() && data[pos] != 0 {
-        let label_len = data[pos] as usize;
-        pos += 1 + label_len;
-        if pos > data.len() {
-            return Err("malformed question section");
+    // Skip question sections
+    for _ in 0..qdcount {
+        pos = skip_name(data, pos)?;
+        if pos + 4 > data.len() {
+            return Err("truncated question section");
         }
+        pos += 4; // Skip QTYPE (2) + QCLASS (2)
     }
-    if pos >= data.len() {
-        return Err("truncated question section");
-    }
-    pos += 1 + 4; // Skip null terminator + QTYPE (2) + QCLASS (2)
 
     let mut results = Vec::new();
 
@@ -196,6 +194,8 @@ pub fn parse_response(data: &[u8], record_type: RecordType) -> Result<Vec<String
                                 txt.push_str(s);
                             }
                             txt_pos += len;
+                        } else {
+                            break;
                         }
                     }
                     if !txt.is_empty() {
@@ -373,5 +373,309 @@ mod tests {
         ];
         let pos = skip_name(&data, 0).unwrap();
         assert_eq!(pos, 5);
+    }
+
+    #[test]
+    fn test_parse_multiple_a_answers() {
+        // Response with QDCOUNT=1, ANCOUNT=2 — verifies ancount is read from
+        // bytes [6..7] (not [4..5] which is qdcount).
+        let response = vec![
+            0x00, 0x01, // Transaction ID
+            0x81, 0x80, // Flags: response, no error
+            0x00, 0x01, // QDCOUNT = 1
+            0x00, 0x02, // ANCOUNT = 2
+            0x00, 0x00, // NSCOUNT
+            0x00, 0x00, // ARCOUNT
+            // Question: example.com A IN
+            0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm',
+            0x00, // null terminator
+            0x00, 0x01, // QTYPE = A
+            0x00, 0x01, // QCLASS = IN
+            // Answer 1
+            0xC0, 0x0C, // name pointer
+            0x00, 0x01, // TYPE = A
+            0x00, 0x01, // CLASS = IN
+            0x00, 0x00, 0x01, 0x00, // TTL
+            0x00, 0x04, // RDLENGTH = 4
+            1, 2, 3, 4, // Answer 2
+            0xC0, 0x0C, // name pointer
+            0x00, 0x01, // TYPE = A
+            0x00, 0x01, // CLASS = IN
+            0x00, 0x00, 0x01, 0x00, // TTL
+            0x00, 0x04, // RDLENGTH = 4
+            5, 6, 7, 8,
+        ];
+
+        let results = parse_response(&response, RecordType::A).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0], "1.2.3.4");
+        assert_eq!(results[1], "5.6.7.8");
+    }
+
+    #[test]
+    fn test_parse_response_with_compressed_question_name() {
+        // Question section uses a compression pointer instead of a regular name.
+        // Old code would read 0xC0 as label length 192 and overshoot.
+        let response = vec![
+            0x00, 0x01, // TX ID
+            0x81, 0x80, // Flags
+            0x00, 0x01, // QDCOUNT = 1
+            0x00, 0x01, // ANCOUNT = 1
+            0x00, 0x00, 0x00, 0x00,
+            // Question with compression pointer (edge case: points to itself conceptually,
+            // but skip_name just advances past the 2-byte pointer)
+            0xC0, 0x0C, // compressed name pointer
+            0x00, 0x01, // QTYPE = A
+            0x00, 0x01, // QCLASS = IN
+            // Answer
+            0xC0, 0x0C, 0x00, 0x01, // TYPE = A
+            0x00, 0x01, // CLASS = IN
+            0x00, 0x00, 0x00, 0x3C, // TTL
+            0x00, 0x04, // RDLENGTH
+            10, 0, 0, 1,
+        ];
+
+        let results = parse_response(&response, RecordType::A).unwrap();
+        assert_eq!(results, vec!["10.0.0.1"]);
+    }
+
+    #[test]
+    fn test_parse_txt_with_bad_length_no_infinite_loop() {
+        // TXT RDATA where the inner text-length byte claims more bytes than
+        // available in rdlength. Without the `break` guard this would loop
+        // forever because txt_pos never advances.
+        let response = vec![
+            0x00, 0x01, 0x81, 0x80, 0x00, 0x01, // QDCOUNT
+            0x00, 0x01, // ANCOUNT
+            0x00, 0x00, 0x00, 0x00, // Question: q.example A IN
+            0x01, b'q', 0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x00, 0x00,
+            0x10, // QTYPE = TXT
+            0x00, 0x01, // Answer
+            0xC0, 0x0C, 0x00, 0x10, // TYPE = TXT
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x3C, 0x00, 0x03, // RDLENGTH = 3
+            // TXT RDATA: text-length says 0xFF (255) but only 2 bytes remain
+            0xFF, b'A', b'B',
+        ];
+
+        // Should NOT hang; should return an error (no valid TXT extracted)
+        let result = parse_response(&response, RecordType::Txt);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_multiple_question_sections() {
+        // Response with QDCOUNT=2 — verifies we skip all questions correctly.
+        let response = vec![
+            0x00, 0x01, 0x81, 0x80, 0x00, 0x02, // QDCOUNT = 2
+            0x00, 0x01, // ANCOUNT = 1
+            0x00, 0x00, 0x00, 0x00, // Question 1: a.com A IN
+            0x01, b'a', 0x03, b'c', b'o', b'm', 0x00, 0x00, 0x01, 0x00, 0x01,
+            // Question 2: b.com A IN
+            0x01, b'b', 0x03, b'c', b'o', b'm', 0x00, 0x00, 0x01, 0x00, 0x01,
+            // Answer (pointing back to first question name)
+            0xC0, 0x0C, 0x00, 0x01, // TYPE = A
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x3C, 0x00, 0x04, 192, 168, 1, 1,
+        ];
+
+        let results = parse_response(&response, RecordType::A).unwrap();
+        assert_eq!(results, vec!["192.168.1.1"]);
+    }
+
+    #[test]
+    fn test_parse_aaaa_response() {
+        let response = vec![
+            0x00, 0x01, 0x81, 0x80, 0x00, 0x01, // QDCOUNT
+            0x00, 0x01, // ANCOUNT
+            0x00, 0x00, 0x00, 0x00, // Question: example.com AAAA IN
+            0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm', 0x00, 0x00,
+            0x1C, // QTYPE = AAAA
+            0x00, 0x01, // Answer
+            0xC0, 0x0C, 0x00, 0x1C, // TYPE = AAAA
+            0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x10, // RDLENGTH = 16
+            0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01,
+        ];
+
+        let results = parse_response(&response, RecordType::Aaaa).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], "2001:db8::1");
+    }
+
+    #[test]
+    fn test_parse_txt_response() {
+        let response = vec![
+            0x00, 0x01, 0x81, 0x80, 0x00, 0x01, // QDCOUNT
+            0x00, 0x01, // ANCOUNT
+            0x00, 0x00, 0x00, 0x00, // Question: whoami.cloudflare TXT CH
+            0x06, b'w', b'h', b'o', b'a', b'm', b'i', 0x0A, b'c', b'l', b'o', b'u', b'd', b'f',
+            b'l', b'a', b'r', b'e', 0x00, 0x00, 0x10, // QTYPE = TXT
+            0x00, 0x03, // QCLASS = CH
+            // Answer
+            0xC0, 0x0C, 0x00, 0x10, // TYPE = TXT
+            0x00, 0x03, 0x00, 0x00, 0x00, 0x3C, 0x00, 0x0D, // RDLENGTH = 13
+            // TXT RDATA: one string "203.0.113.42"
+            0x0C, // text-length = 12
+            b'2', b'0', b'3', b'.', b'0', b'.', b'1', b'1', b'3', b'.', b'4', b'2',
+        ];
+
+        let results = parse_response(&response, RecordType::Txt).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], "203.0.113.42");
+    }
+
+    #[test]
+    fn test_build_query_domain_too_long() {
+        // 253 byte limit for total encoded domain name
+        let label = "a".repeat(63);
+        let domain = format!("{}.{}.{}.{}", label, label, label, label);
+        let result = build_query(&domain, RecordType::A, DnsClass::In);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_build_query_max_label() {
+        // Exactly 63 bytes should succeed
+        let label = "a".repeat(63);
+        let domain = format!("{}.com", label);
+        let result = build_query(&domain, RecordType::A, DnsClass::In);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_build_query_aaaa_record() {
+        let query = build_query("example.com", RecordType::Aaaa, DnsClass::In).unwrap();
+        // QTYPE bytes at end of question section
+        let len = query.len();
+        let qtype = u16::from_be_bytes([query[len - 4], query[len - 3]]);
+        assert_eq!(qtype, 28); // AAAA = 28
+    }
+
+    #[test]
+    fn test_skip_name_multi_label() {
+        let data = [
+            0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', // "example"
+            0x03, b'c', b'o', b'm', // "com"
+            0x00, // null terminator
+        ];
+        let pos = skip_name(&data, 0).unwrap();
+        assert_eq!(pos, 13); // past null terminator
+    }
+
+    #[test]
+    fn test_skip_name_out_of_bounds() {
+        let data = [0x05, b'a', b'b']; // claims 5 bytes but only 2 available
+        let result = skip_name(&data, 0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_skip_name_empty_position() {
+        let data: [u8; 0] = [];
+        let result = skip_name(&data, 0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_response_truncated_answer() {
+        // Header claims 1 answer but data ends prematurely
+        let response = vec![
+            0x00, 0x01, 0x81, 0x80, 0x00, 0x01, // QDCOUNT
+            0x00, 0x01, // ANCOUNT = 1
+            0x00, 0x00, 0x00, 0x00, // Question
+            0x01, b'a', 0x00, 0x00, 0x01, 0x00, 0x01,
+            // Answer: compressed name + partial header (only 6 bytes, need 10)
+            0xC0, 0x0C, 0x00, 0x01, 0x00, 0x01,
+        ];
+
+        // Should not panic; gracefully returns "no matching records found"
+        let result = parse_response(&response, RecordType::A);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_a_record_wrong_rdlength() {
+        // A record with rdlength=3 (invalid, needs 4) should be skipped
+        let response = vec![
+            0x00, 0x01, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, // ANCOUNT = 1
+            0x00, 0x00, 0x00, 0x00, // Question
+            0x01, b'a', 0x00, 0x00, 0x01, 0x00, 0x01,
+            // Answer with wrong RDLENGTH for A record
+            0xC0, 0x0C, 0x00, 0x01, // TYPE = A
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x3C, 0x00, 0x03, // RDLENGTH = 3 (should be 4)
+            1, 2, 3,
+        ];
+
+        let result = parse_response(&response, RecordType::A);
+        assert!(result.is_err()); // "no matching records found" because A needs rdlength==4
+    }
+
+    #[test]
+    fn test_parse_skips_non_matching_record_type() {
+        // Response has AAAA record but we ask for A
+        let response = vec![
+            0x00, 0x01, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, // ANCOUNT = 1
+            0x00, 0x00, 0x00, 0x00, // Question
+            0x01, b'a', 0x00, 0x00, 0x01, 0x00, 0x01, // Answer: AAAA record
+            0xC0, 0x0C, 0x00, 0x1C, // TYPE = AAAA (28)
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x3C, 0x00, 0x10, // RDLENGTH = 16
+            0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01,
+        ];
+
+        // Asking for A, but only AAAA available
+        let result = parse_response(&response, RecordType::A);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_txt_multi_segment() {
+        // TXT record with multiple text segments concatenated
+        let response = vec![
+            0x00, 0x01, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+            // Question
+            0x01, b'q', 0x00, 0x00, 0x10, 0x00, 0x01, // Answer
+            0xC0, 0x0C, 0x00, 0x10, // TXT
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x3C, 0x00, 0x0A, // RDLENGTH = 10
+            // Segment 1: "hello" (5 chars)
+            0x05, b'h', b'e', b'l', b'l', b'o',
+            // Segment 2: "world" (but only 3 bytes to fit in RDLENGTH)
+            // Actually: segment 2 = "wor" (3 chars) → total RDLENGTH = 1+5+1+3 = 10
+            0x03, b'w', b'o', b'r',
+        ];
+
+        let results = parse_response(&response, RecordType::Txt).unwrap();
+        assert_eq!(results[0], "hellowor");
+    }
+
+    #[test]
+    fn test_parse_response_zero_qdcount() {
+        // Some DNS responses may have qdcount=0
+        let response = vec![
+            0x00, 0x01, 0x81, 0x80, 0x00, 0x00, // QDCOUNT = 0
+            0x00, 0x01, // ANCOUNT = 1
+            0x00, 0x00, 0x00, 0x00, // No question section — go directly to answer
+            0x03, b'f', b'o', b'o', 0x00, // "foo" uncompressed name
+            0x00, 0x01, // TYPE = A
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x3C, 0x00, 0x04, 8, 8, 4, 4,
+        ];
+
+        let results = parse_response(&response, RecordType::A).unwrap();
+        assert_eq!(results, vec!["8.8.4.4"]);
+    }
+
+    #[test]
+    fn test_build_query_record_type_txt() {
+        let query = build_query("example.com", RecordType::Txt, DnsClass::In).unwrap();
+        let len = query.len();
+        let qtype = u16::from_be_bytes([query[len - 4], query[len - 3]]);
+        assert_eq!(qtype, 16); // TXT = 16
+    }
+
+    #[test]
+    fn test_build_query_class_chaos() {
+        let query = build_query("whoami.cloudflare", RecordType::Txt, DnsClass::Ch).unwrap();
+        let len = query.len();
+        let qclass = u16::from_be_bytes([query[len - 2], query[len - 1]]);
+        assert_eq!(qclass, 3); // CHAOS = 3
     }
 }

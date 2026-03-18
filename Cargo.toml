@@ -1,6 +1,6 @@
 [package]
 name = "ip-discovery"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.85"
 description = "A lightweight, high-performance library for detecting public IP addresses via DNS, HTTP, and STUN protocols"
@@ -19,10 +19,11 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["dns", "http", "stun"]
+default = ["dns", "stun"]
 dns = []
 http = ["dep:reqwest"]
 stun = []
+all = ["dns", "http", "stun"]
 native-tls = ["reqwest?/native-tls"]
 
 [dependencies]

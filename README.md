@@ -22,7 +22,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ip-discovery = "0.1"
+ip-discovery = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -50,7 +50,7 @@ let v6 = get_ipv6().await?;
 
 ## Configuration
 
-The defaults (Cloudflare STUN → Cloudflare DNS → Google STUN/DNS → HTTP fallback; 10s timeout) work well for most cases. If you need more control:
+The defaults (Cloudflare STUN → Cloudflare DNS → Google STUN/DNS → OpenDNS; 10s timeout) work well for most cases. If you need more control:
 
 ```rust
 use ip_discovery::{Config, Strategy, Protocol, BuiltinProvider, get_ip_with};
@@ -113,13 +113,20 @@ All built-in providers are from tier-1 infrastructure companies:
 |---------|:-------:|-------------|
 | `dns` | ✅ | DNS detection (raw UDP, no extra deps) |
 | `stun` | ✅ | STUN detection (raw UDP, no extra deps) |
-| `http` | ✅ | HTTP detection (pulls in `reqwest` + `rustls`) |
-| `native-tls` | ❌ | Use OS-native TLS instead of rustls |
+| `http` | ❌ | HTTP detection (pulls in `reqwest` + `rustls`) |
+| `all` | ❌ | Enable all protocols (`dns` + `stun` + `http`) |
+| `native-tls` | ❌ | Use OS-native TLS instead of rustls (requires `http`) |
 
-If you only need DNS and STUN, you can skip the HTTP dependency entirely:
+By default, only DNS and STUN are enabled — zero network library dependencies, fast compile times. To also use HTTP providers:
 
 ```toml
-ip-discovery = { version = "0.1", default-features = false, features = ["dns", "stun"] }
+ip-discovery = { version = "0.2", features = ["http"] }
+```
+
+Or enable everything:
+
+```toml
+ip-discovery = { version = "0.2", features = ["all"] }
 ```
 
 ## Performance

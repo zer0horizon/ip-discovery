@@ -253,64 +253,347 @@ impl StunMessage {
 mod tests {
     use super::*;
 
+    // ── Encoding ────────────────────────────────────────────────────
+
     #[test]
     fn test_encode_binding_request() {
         let msg = StunMessage::new(StunMethod::Request);
         let encoded = msg.encode();
 
         assert_eq!(encoded.len(), 20);
+        // Message type: Binding Request (0x0001)
         assert_eq!(encoded[0], 0x00);
-        assert_eq!(encoded[1], 0x01); // Binding Request
+        assert_eq!(encoded[1], 0x01);
+        // Message length: 0 (no attributes)
         assert_eq!(encoded[2], 0x00);
-        assert_eq!(encoded[3], 0x00); // Length = 0
-        assert_eq!(encoded[4], 0x21);
-        assert_eq!(encoded[5], 0x12);
-        assert_eq!(encoded[6], 0xA4);
-        assert_eq!(encoded[7], 0x42); // Magic Cookie
+        assert_eq!(encoded[3], 0x00);
+        // Magic Cookie
+        assert_eq!(&encoded[4..8], &[0x21, 0x12, 0xA4, 0x42]);
     }
 
     #[test]
-    fn test_decode_binding_response() {
-        // Minimal binding response with XOR-MAPPED-ADDRESS
-        let response = [
-            0x01,
-            0x01, // Binding Response
-            0x00,
-            0x0C, // Length = 12
-            0x21,
-            0x12,
-            0xA4,
-            0x42, // Magic Cookie
-            0x00,
-            0x01,
-            0x02,
-            0x03,
-            0x04,
-            0x05,
-            0x06,
-            0x07,
-            0x08,
-            0x09,
-            0x0A,
-            0x0B, // Transaction ID
-            // XOR-MAPPED-ADDRESS attribute
-            0x00,
-            0x20, // Type
-            0x00,
-            0x08, // Length
-            0x00,
-            0x01, // Family (IPv4)
-            0x21,
-            0x12, // XOR'd Port
-            0x21 ^ 192,
-            0x12 ^ 168,
-            0xA4 ^ 1,
-            0x42 ^ 100, // XOR'd Address (192.168.1.100)
-        ];
+    fn test_encode_preserves_transaction_id() {
+        let msg = StunMessage::new(StunMethod::Request);
+        let encoded = msg.encode();
+        assert_eq!(&encoded[8..20], msg.transaction_id());
+    }
+
+    #[test]
+    fn test_encode_decode_roundtrip() {
+        let original = StunMessage::new(StunMethod::Request);
+        let encoded = original.encode();
+        let decoded = StunMessage::decode(&encoded).unwrap();
+
+        assert_eq!(decoded.msg_type, StunMethod::Request);
+        assert_eq!(decoded.transaction_id(), original.transaction_id());
+        assert!(decoded.attributes.is_empty());
+    }
+
+    // ── StunMethod ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_stun_method_round_trip() {
+        assert_eq!(StunMethod::from_u16(0x0001), Some(StunMethod::Request));
+        assert_eq!(StunMethod::from_u16(0x0101), Some(StunMethod::Response));
+        assert_eq!(StunMethod::from_u16(0x0111), Some(StunMethod::Error));
+        assert_eq!(StunMethod::from_u16(0xFFFF), None);
+    }
+
+    #[test]
+    fn test_stun_method_to_u16() {
+        assert_eq!(StunMethod::Request.to_u16(), 0x0001);
+        assert_eq!(StunMethod::Response.to_u16(), 0x0101);
+        assert_eq!(StunMethod::Error.to_u16(), 0x0111);
+    }
+
+    // ── Decode error paths ──────────────────────────────────────────
+
+    #[test]
+    fn test_decode_too_short() {
+        let data = [0u8; 19];
+        assert!(matches!(
+            StunMessage::decode(&data),
+            Err("message too short")
+        ));
+    }
+
+    #[test]
+    fn test_decode_bad_magic_cookie() {
+        let mut data = [0u8; 20];
+        data[0] = 0x00;
+        data[1] = 0x01; // Binding Request
+                        // Leave magic cookie as 0x00000000 (wrong)
+        assert!(matches!(
+            StunMessage::decode(&data),
+            Err("invalid magic cookie")
+        ));
+    }
+
+    #[test]
+    fn test_decode_unknown_message_type() {
+        let mut data = [0u8; 20];
+        data[0] = 0xFF;
+        data[1] = 0xFF; // Unknown type
+        data[4..8].copy_from_slice(&MAGIC_COOKIE.to_be_bytes());
+        assert!(matches!(
+            StunMessage::decode(&data),
+            Err("unknown message type")
+        ));
+    }
+
+    // ── XOR-MAPPED-ADDRESS (IPv4) ───────────────────────────────────
+
+    #[test]
+    fn test_xor_mapped_address_ipv4() {
+        let tx_id = [0x00u8; 12];
+        let ip = Ipv4Addr::new(203, 0, 113, 42);
+        let xor_addr = u32::from(ip) ^ MAGIC_COOKIE;
+
+        let mut response = Vec::with_capacity(32);
+        response.extend_from_slice(&0x0101u16.to_be_bytes()); // Binding Response
+        response.extend_from_slice(&12u16.to_be_bytes()); // Length = 12
+        response.extend_from_slice(&MAGIC_COOKIE.to_be_bytes());
+        response.extend_from_slice(&tx_id);
+        // XOR-MAPPED-ADDRESS
+        response.extend_from_slice(&0x0020u16.to_be_bytes()); // Type
+        response.extend_from_slice(&8u16.to_be_bytes()); // Length
+        response.push(0x00);
+        response.push(0x01); // IPv4
+        response.extend_from_slice(&0u16.to_be_bytes()); // Port (don't care)
+        response.extend_from_slice(&xor_addr.to_be_bytes());
 
         let msg = StunMessage::decode(&response).unwrap();
-        let addr = msg.get_mapped_address().unwrap();
+        assert_eq!(msg.get_mapped_address(), Some(IpAddr::V4(ip)));
+    }
 
-        assert_eq!(addr, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)));
+    // ── XOR-MAPPED-ADDRESS (IPv6) ───────────────────────────────────
+
+    #[test]
+    fn test_xor_mapped_address_ipv6() {
+        let tx_id: [u8; 12] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+        ];
+        let ip = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1);
+        let ip_bytes = ip.octets();
+
+        // Build XOR key = magic_cookie || transaction_id
+        let mut xor_key = [0u8; 16];
+        xor_key[0..4].copy_from_slice(&MAGIC_COOKIE.to_be_bytes());
+        xor_key[4..16].copy_from_slice(&tx_id);
+
+        let mut xored = [0u8; 16];
+        for i in 0..16 {
+            xored[i] = ip_bytes[i] ^ xor_key[i];
+        }
+
+        let mut response = Vec::with_capacity(44);
+        response.extend_from_slice(&0x0101u16.to_be_bytes());
+        response.extend_from_slice(&24u16.to_be_bytes()); // Length = 24
+        response.extend_from_slice(&MAGIC_COOKIE.to_be_bytes());
+        response.extend_from_slice(&tx_id);
+        // XOR-MAPPED-ADDRESS
+        response.extend_from_slice(&0x0020u16.to_be_bytes());
+        response.extend_from_slice(&20u16.to_be_bytes()); // attr len = 20
+        response.push(0x00);
+        response.push(0x02); // IPv6
+        response.extend_from_slice(&0u16.to_be_bytes()); // Port
+        response.extend_from_slice(&xored);
+
+        let msg = StunMessage::decode(&response).unwrap();
+        assert_eq!(msg.get_mapped_address(), Some(IpAddr::V6(ip)));
+    }
+
+    // ── MAPPED-ADDRESS (IPv4) — fallback ────────────────────────────
+
+    #[test]
+    fn test_mapped_address_ipv4_fallback() {
+        let tx_id = [0u8; 12];
+        let ip = Ipv4Addr::new(10, 0, 0, 1);
+
+        let mut response = Vec::with_capacity(32);
+        response.extend_from_slice(&0x0101u16.to_be_bytes());
+        response.extend_from_slice(&12u16.to_be_bytes());
+        response.extend_from_slice(&MAGIC_COOKIE.to_be_bytes());
+        response.extend_from_slice(&tx_id);
+        // MAPPED-ADDRESS (0x0001)
+        response.extend_from_slice(&0x0001u16.to_be_bytes());
+        response.extend_from_slice(&8u16.to_be_bytes());
+        response.push(0x00);
+        response.push(0x01); // IPv4
+        response.extend_from_slice(&0u16.to_be_bytes()); // Port
+        response.extend_from_slice(&ip.octets());
+
+        let msg = StunMessage::decode(&response).unwrap();
+        assert_eq!(msg.get_mapped_address(), Some(IpAddr::V4(ip)));
+    }
+
+    #[test]
+    fn test_mapped_address_ipv6_fallback() {
+        let tx_id = [0u8; 12];
+        let ip = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
+
+        let mut response = Vec::with_capacity(44);
+        response.extend_from_slice(&0x0101u16.to_be_bytes());
+        response.extend_from_slice(&24u16.to_be_bytes());
+        response.extend_from_slice(&MAGIC_COOKIE.to_be_bytes());
+        response.extend_from_slice(&tx_id);
+        // MAPPED-ADDRESS
+        response.extend_from_slice(&0x0001u16.to_be_bytes());
+        response.extend_from_slice(&20u16.to_be_bytes());
+        response.push(0x00);
+        response.push(0x02); // IPv6
+        response.extend_from_slice(&0u16.to_be_bytes());
+        response.extend_from_slice(&ip.octets());
+
+        let msg = StunMessage::decode(&response).unwrap();
+        assert_eq!(msg.get_mapped_address(), Some(IpAddr::V6(ip)));
+    }
+
+    // ── XOR-MAPPED-ADDRESS preferred over MAPPED-ADDRESS ────────────
+
+    #[test]
+    fn test_xor_mapped_preferred_over_mapped() {
+        let tx_id = [0u8; 12];
+        let mapped_ip = Ipv4Addr::new(1, 1, 1, 1);
+        let xor_ip = Ipv4Addr::new(8, 8, 8, 8);
+        let xor_addr = u32::from(xor_ip) ^ MAGIC_COOKIE;
+
+        let mut response = Vec::with_capacity(48);
+        response.extend_from_slice(&0x0101u16.to_be_bytes());
+        response.extend_from_slice(&24u16.to_be_bytes()); // 2 attrs × 12 bytes
+        response.extend_from_slice(&MAGIC_COOKIE.to_be_bytes());
+        response.extend_from_slice(&tx_id);
+        // MAPPED-ADDRESS first
+        response.extend_from_slice(&0x0001u16.to_be_bytes());
+        response.extend_from_slice(&8u16.to_be_bytes());
+        response.push(0x00);
+        response.push(0x01);
+        response.extend_from_slice(&0u16.to_be_bytes());
+        response.extend_from_slice(&mapped_ip.octets());
+        // XOR-MAPPED-ADDRESS second
+        response.extend_from_slice(&0x0020u16.to_be_bytes());
+        response.extend_from_slice(&8u16.to_be_bytes());
+        response.push(0x00);
+        response.push(0x01);
+        response.extend_from_slice(&0u16.to_be_bytes());
+        response.extend_from_slice(&xor_addr.to_be_bytes());
+
+        let msg = StunMessage::decode(&response).unwrap();
+        // Should pick XOR-MAPPED-ADDRESS (8.8.8.8), not MAPPED-ADDRESS (1.1.1.1)
+        assert_eq!(msg.get_mapped_address(), Some(IpAddr::V4(xor_ip)));
+    }
+
+    // ── No address attribute ────────────────────────────────────────
+
+    #[test]
+    fn test_no_mapped_address_returns_none() {
+        let tx_id = [0u8; 12];
+
+        let mut response = Vec::with_capacity(28);
+        response.extend_from_slice(&0x0101u16.to_be_bytes());
+        response.extend_from_slice(&8u16.to_be_bytes());
+        response.extend_from_slice(&MAGIC_COOKIE.to_be_bytes());
+        response.extend_from_slice(&tx_id);
+        // Unknown attribute (0x8000)
+        response.extend_from_slice(&0x8000u16.to_be_bytes());
+        response.extend_from_slice(&4u16.to_be_bytes());
+        response.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+
+        let msg = StunMessage::decode(&response).unwrap();
+        assert_eq!(msg.get_mapped_address(), None);
+    }
+
+    // ── Attribute padding ───────────────────────────────────────────
+
+    #[test]
+    fn test_attribute_padding() {
+        // Attribute with length=5 should be padded to 8 bytes
+        let tx_id = [0u8; 12];
+
+        let mut response = Vec::with_capacity(36);
+        response.extend_from_slice(&0x0101u16.to_be_bytes());
+        response.extend_from_slice(&20u16.to_be_bytes());
+        response.extend_from_slice(&MAGIC_COOKIE.to_be_bytes());
+        response.extend_from_slice(&tx_id);
+        // Unknown attr with odd length (5 bytes + 3 padding)
+        response.extend_from_slice(&0x8001u16.to_be_bytes());
+        response.extend_from_slice(&5u16.to_be_bytes());
+        response.extend_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05]);
+        response.extend_from_slice(&[0x00, 0x00, 0x00]); // padding
+                                                         // XOR-MAPPED-ADDRESS after padded attribute
+        let xor_addr = u32::from(Ipv4Addr::new(172, 16, 0, 1)) ^ MAGIC_COOKIE;
+        response.extend_from_slice(&0x0020u16.to_be_bytes());
+        response.extend_from_slice(&8u16.to_be_bytes());
+        response.push(0x00);
+        response.push(0x01);
+        response.extend_from_slice(&0u16.to_be_bytes());
+        response.extend_from_slice(&xor_addr.to_be_bytes());
+
+        let msg = StunMessage::decode(&response).unwrap();
+        assert_eq!(
+            msg.get_mapped_address(),
+            Some(IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1)))
+        );
+    }
+
+    // ── Invalid address family ──────────────────────────────────────
+
+    #[test]
+    fn test_xor_mapped_unknown_family() {
+        let tx_id = [0u8; 12];
+
+        let mut response = Vec::with_capacity(32);
+        response.extend_from_slice(&0x0101u16.to_be_bytes());
+        response.extend_from_slice(&12u16.to_be_bytes());
+        response.extend_from_slice(&MAGIC_COOKIE.to_be_bytes());
+        response.extend_from_slice(&tx_id);
+        // XOR-MAPPED-ADDRESS with unknown family 0x03
+        response.extend_from_slice(&0x0020u16.to_be_bytes());
+        response.extend_from_slice(&8u16.to_be_bytes());
+        response.push(0x00);
+        response.push(0x03); // Unknown family
+        response.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+        let msg = StunMessage::decode(&response).unwrap();
+        assert_eq!(msg.get_mapped_address(), None);
+    }
+
+    // ── Truncated attribute value ───────────────────────────────────
+
+    #[test]
+    fn test_xor_mapped_address_truncated_ipv4() {
+        let tx_id = [0u8; 12];
+
+        let mut response = Vec::with_capacity(28);
+        response.extend_from_slice(&0x0101u16.to_be_bytes());
+        response.extend_from_slice(&8u16.to_be_bytes());
+        response.extend_from_slice(&MAGIC_COOKIE.to_be_bytes());
+        response.extend_from_slice(&tx_id);
+        // XOR-MAPPED-ADDRESS with IPv4 family but only 4 bytes (need 8)
+        response.extend_from_slice(&0x0020u16.to_be_bytes());
+        response.extend_from_slice(&4u16.to_be_bytes()); // only 4 bytes
+        response.push(0x00);
+        response.push(0x01); // IPv4
+        response.extend_from_slice(&0u16.to_be_bytes()); // Port only, no IP!
+
+        let msg = StunMessage::decode(&response).unwrap();
+        assert_eq!(msg.get_mapped_address(), None);
+    }
+
+    // ── Binding Error response type ─────────────────────────────────
+
+    #[test]
+    fn test_decode_error_response() {
+        let tx_id = [0xAAu8; 12];
+
+        let mut response = Vec::with_capacity(20);
+        response.extend_from_slice(&0x0111u16.to_be_bytes()); // Binding Error
+        response.extend_from_slice(&0u16.to_be_bytes());
+        response.extend_from_slice(&MAGIC_COOKIE.to_be_bytes());
+        response.extend_from_slice(&tx_id);
+
+        let msg = StunMessage::decode(&response).unwrap();
+        assert_eq!(msg.msg_type, StunMethod::Error);
+        assert_eq!(msg.transaction_id(), &tx_id);
     }
 }

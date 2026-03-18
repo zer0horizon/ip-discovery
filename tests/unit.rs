@@ -1,4 +1,4 @@
-//! Unit tests for config, error, and HTTP module
+//! Unit tests for config, error, HTTP parser, and types modules
 
 #[cfg(test)]
 mod config_tests {
@@ -8,7 +8,6 @@ mod config_tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        // Default should work without panicking
         let _ = config;
     }
 
@@ -74,6 +73,31 @@ mod config_tests {
             .build();
         let _ = config;
     }
+
+    #[test]
+    fn test_builder_chained_multiple_protocols() {
+        let config = Config::builder()
+            .protocols(&[Protocol::Dns, Protocol::Stun, Protocol::Http])
+            .version(IpVersion::Any)
+            .strategy(Strategy::First)
+            .build();
+        let _ = config;
+    }
+
+    #[test]
+    fn test_builder_very_short_timeout() {
+        let config = Config::builder().timeout(Duration::from_millis(1)).build();
+        let _ = config;
+    }
+
+    #[test]
+    fn test_builder_consensus_min_agree_1() {
+        // min_agree=1 is valid to set, the resolver clamps it to 2
+        let config = Config::builder()
+            .strategy(Strategy::Consensus { min_agree: 1 })
+            .build();
+        let _ = config;
+    }
 }
 
 #[cfg(test)]
@@ -135,6 +159,23 @@ mod error_tests {
         let msg = format!("{}", err);
         assert!(msg.contains("all providers failed"));
     }
+
+    #[test]
+    fn test_consensus_not_reached_zero() {
+        let err = Error::ConsensusNotReached {
+            required: 2,
+            got: 0,
+        };
+        let msg = format!("{}", err);
+        assert!(msg.contains("0"));
+    }
+
+    #[test]
+    fn test_provider_error_debug_impl() {
+        let err = ProviderError::message("Test", "err");
+        let debug = format!("{:?}", err);
+        assert!(!debug.is_empty());
+    }
 }
 
 #[cfg(test)]
@@ -175,12 +216,53 @@ mod types_tests {
         let version = IpVersion::default();
         assert_eq!(version, IpVersion::Any);
     }
+
+    #[test]
+    fn test_all_builtin_providers_have_nonempty_display() {
+        for provider in BuiltinProvider::ALL {
+            let name = format!("{}", provider);
+            assert!(
+                !name.is_empty(),
+                "Provider {:?} has empty display name",
+                provider
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_builtin_providers_have_protocol() {
+        for provider in BuiltinProvider::ALL {
+            let protocol = provider.protocol();
+            // Every provider must belong to one of the three protocols
+            assert!(
+                matches!(protocol, Protocol::Dns | Protocol::Http | Protocol::Stun),
+                "Provider {:?} has unexpected protocol {:?}",
+                provider,
+                protocol
+            );
+        }
+    }
+
+    #[test]
+    fn test_ip_version_variants() {
+        let _ = IpVersion::V4;
+        let _ = IpVersion::V6;
+        let _ = IpVersion::Any;
+    }
+
+    #[test]
+    fn test_protocol_debug_impl() {
+        let debug = format!("{:?}", Protocol::Dns);
+        assert!(debug.contains("Dns"));
+    }
 }
 
 #[cfg(feature = "http")]
 #[cfg(test)]
 mod http_tests {
     use ip_discovery::http::{parse_cloudflare_trace, parse_plain_text};
+
+    // ── parse_plain_text ────────────────────────────────────────────
 
     #[test]
     fn test_parse_plain_text_ipv4() {
@@ -208,6 +290,56 @@ mod http_tests {
     }
 
     #[test]
+    fn test_parse_plain_text_with_whitespace() {
+        let ip = parse_plain_text("  203.0.113.1  \n");
+        assert!(ip.is_some());
+        assert_eq!(ip.unwrap().to_string(), "203.0.113.1");
+    }
+
+    #[test]
+    fn test_parse_plain_text_crlf() {
+        let ip = parse_plain_text("10.0.0.1\r\n");
+        assert!(ip.is_some());
+        assert_eq!(ip.unwrap().to_string(), "10.0.0.1");
+    }
+
+    #[test]
+    fn test_parse_plain_text_ipv4_mapped_ipv6() {
+        let ip = parse_plain_text("::ffff:192.168.1.1\n");
+        assert!(ip.is_some());
+    }
+
+    #[test]
+    fn test_parse_plain_text_loopback() {
+        let ip = parse_plain_text("127.0.0.1");
+        assert!(ip.is_some());
+        assert_eq!(ip.unwrap().to_string(), "127.0.0.1");
+    }
+
+    #[test]
+    fn test_parse_plain_text_ipv6_full() {
+        let ip = parse_plain_text("2001:0db8:0000:0000:0000:0000:0000:0001");
+        assert!(ip.is_some());
+    }
+
+    #[test]
+    fn test_parse_plain_text_garbage() {
+        assert!(parse_plain_text("hello world").is_none());
+        assert!(parse_plain_text("1.2.3.999").is_none());
+        assert!(parse_plain_text("1.2.3").is_none());
+        assert!(parse_plain_text(":::").is_none());
+    }
+
+    #[test]
+    fn test_parse_plain_text_multiple_lines() {
+        // Should only parse the trimmed full text, not individual lines
+        let ip = parse_plain_text("1.2.3.4\n5.6.7.8\n");
+        assert!(ip.is_none()); // "1.2.3.4\n5.6.7.8" trimmed is not a valid IP
+    }
+
+    // ── parse_cloudflare_trace ──────────────────────────────────────
+
+    #[test]
     fn test_parse_cloudflare_trace() {
         let response = "fl=123abc\nip=203.0.113.1\nts=1234567890\n";
         let ip = parse_cloudflare_trace(response);
@@ -227,5 +359,76 @@ mod http_tests {
         let response = "fl=abc\nip=2001:db8::1\nts=123\n";
         let ip = parse_cloudflare_trace(response);
         assert!(ip.is_some());
+    }
+
+    #[test]
+    fn test_parse_cloudflare_trace_ip_first_line() {
+        let response = "ip=10.0.0.1\nfl=abc\n";
+        let ip = parse_cloudflare_trace(response);
+        assert!(ip.is_some());
+        assert_eq!(ip.unwrap().to_string(), "10.0.0.1");
+    }
+
+    #[test]
+    fn test_parse_cloudflare_trace_ip_last_line() {
+        let response = "fl=abc\nts=123\nip=172.16.0.1";
+        let ip = parse_cloudflare_trace(response);
+        assert!(ip.is_some());
+        assert_eq!(ip.unwrap().to_string(), "172.16.0.1");
+    }
+
+    #[test]
+    fn test_parse_cloudflare_trace_empty() {
+        assert!(parse_cloudflare_trace("").is_none());
+    }
+
+    #[test]
+    fn test_parse_cloudflare_trace_ip_prefix_only() {
+        // "ip=" with no value
+        assert!(parse_cloudflare_trace("ip=\n").is_none());
+    }
+
+    #[test]
+    fn test_parse_cloudflare_trace_ip_invalid_value() {
+        assert!(parse_cloudflare_trace("ip=not_an_ip\n").is_none());
+    }
+
+    #[test]
+    fn test_parse_cloudflare_trace_similar_key() {
+        // "ipaddr=" should not match "ip="
+        let response = "ipaddr=1.2.3.4\nfl=abc\n";
+        assert!(parse_cloudflare_trace(response).is_none());
+    }
+
+    #[test]
+    fn test_parse_cloudflare_trace_crlf() {
+        let response = "fl=abc\r\nip=8.8.8.8\r\nts=123\r\n";
+        let ip = parse_cloudflare_trace(response);
+        assert!(ip.is_some());
+        assert_eq!(ip.unwrap().to_string(), "8.8.8.8");
+    }
+
+    #[test]
+    fn test_parse_cloudflare_trace_full_realistic() {
+        let response = "\
+fl=638f123\n\
+h=1.1.1.1\n\
+ip=198.51.100.42\n\
+ts=1710000000.123\n\
+visit_scheme=https\n\
+uag=ip-discovery/0.1.5\n\
+colo=LAX\n\
+sliver=none\n\
+http=http/2\n\
+loc=US\n\
+tls=TLSv1.3\n\
+sni=plaintext\n\
+warp=off\n\
+gateway=off\n\
+rbi=off\n\
+kex=X25519\n";
+        let ip = parse_cloudflare_trace(response);
+        assert!(ip.is_some());
+        assert_eq!(ip.unwrap().to_string(), "198.51.100.42");
     }
 }
