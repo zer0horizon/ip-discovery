@@ -22,7 +22,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
-      - run: cargo check --all-features
+      - run: cargo check --workspace --all-features
 
   test:
     name: Test
@@ -44,7 +44,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo clippy --all-features -- -D warnings
+      - run: cargo clippy --workspace --all-features -- -D warnings
 
   fmt:
     name: Format
@@ -54,7 +54,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - run: cargo fmt --check
+      - run: cargo fmt --check --all
 
   docs:
     name: Documentation
@@ -62,6 +62,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo doc --no-deps --all-features
+      - run: cargo doc --workspace --no-deps --all-features
         env:
           RUSTDOCFLAGS: "-D warnings"

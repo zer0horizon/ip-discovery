@@ -6,7 +6,59 @@
 
 Detect your public IP address using DNS, STUN, or HTTP — with built-in fallback across trusted providers.
 
-## Features
+## CLI Tool — `ipd`
+
+A command-line tool powered by this library. Get your public IP in one command:
+
+```bash
+$ ipd
+203.0.113.42
+```
+
+### Install
+
+**Homebrew (macOS):**
+
+```bash
+brew install zer0horizon/tap/ipd
+```
+
+**Shell (macOS & Linux):**
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/zer0horizon/ip-discovery/releases/latest/download/ipd-installer.sh | sh
+```
+
+**PowerShell (Windows):**
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/zer0horizon/ip-discovery/releases/latest/download/ipd-installer.ps1 | iex"
+```
+
+**Cargo:**
+
+```bash
+cargo install ipd
+```
+
+### CLI Usage
+
+```bash
+ipd                    # Plain IP output
+ipd -4                 # IPv4 only
+ipd -6                 # IPv6 only
+ipd -f json            # JSON output
+ipd -f verbose         # Verbose output with provider info
+ipd -s race            # Race all providers, return fastest
+ipd -p dns -p stun     # Use only DNS and STUN protocols
+ipd -t 5               # 5 second timeout
+```
+
+---
+
+## Library
+
+### Features
 
 - DNS and STUN via raw UDP sockets (zero network library dependencies)
 - HTTP/HTTPS via [reqwest](https://docs.rs/reqwest) (optional)

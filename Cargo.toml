@@ -1,3 +1,6 @@
+[workspace]
+members = ["ipd"]
+
 [package]
 name = "ip-discovery"
 version = "0.2.0"
@@ -17,6 +20,9 @@ exclude = ["target/", ".github/"]
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[package.metadata.dist]
+dist = false
 
 [features]
 default = ["dns", "stun"]
@@ -40,3 +46,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "macros"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
