@@ -17,5 +17,4 @@ targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-da
 auto-includes = true
 
 # Homebrew tap configuration
-[dist.homebrew]
 tap = "zer0horizon/homebrew-tap"
