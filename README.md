@@ -6,6 +6,42 @@
 
 Detect your public IP address using DNS, STUN, or HTTP — with built-in fallback across trusted providers.
 
+## Why ip-discovery?
+
+Most machines don't know their own public IP. If you're behind NAT, a load balancer, or a cloud VPC, your OS only sees a private address like `10.x.x.x` or `192.168.x.x`. This library solves that — reliably, fast, and with zero configuration.
+
+**Common use cases:**
+
+- **Self-hosted servers with dynamic IPs** — Your home server or office NAS gets a new IP every time the ISP rotates it. Use `ip-discovery` to detect the change and update your DNS record (dynamic DNS), notify clients, or refresh firewall rules — automatically.
+
+- **WebRTC / P2P connection setup** — When building WebRTC applications, you need your public IP to generate SDP offers/answers and ICE candidates. `ip-discovery` uses the same STUN protocol that browsers use, giving you the public-facing address for direct peer connections without relying on a browser environment.
+
+- **NAT traversal & hole punching** — Building a peer-to-peer system (game server, file sharing, VPN)? You need to know your public IP and the type of NAT you're behind before you can punch through it.
+
+- **Server self-registration** — Microservices or edge nodes that spin up in dynamic cloud environments (auto-scaling groups, spot instances) and need to register their public address with a service registry or coordination layer.
+
+- **Security & audit logging** — Record the public IP of the machine at the time of an event for compliance or forensics. Use `Consensus` strategy to cross-verify across multiple providers and guard against a single provider being spoofed.
+
+- **CLI diagnostics** — Quickly check "what IP does the internet see me as?" during debugging, without opening a browser or remembering which `curl` endpoint to hit.
+
+### Why not just `curl` an IP-echo service?
+
+Calling a single HTTP endpoint works for a quick manual check, but falls short in production:
+
+| | HTTP IP-echo services | `ip-discovery` |
+|---|---|---|
+| **Single point of failure** | If that one service is down or slow, you get nothing | Automatic fallback across 9 providers and 3 protocols |
+| **Rate limiting** | Many free services aggressively throttle or block automated requests | DNS and STUN are lightweight UDP queries — far less likely to be throttled than HTTP APIs |
+| **Latency** | Full TCP + TLS handshake every time (~200–500ms) | DNS & STUN use raw UDP — typically **<50ms**, 2–3× faster |
+| **Result verification** | You trust one provider blindly — it could return stale data or be spoofed | `Consensus` strategy cross-checks across multiple providers |
+| **IPv6 support** | Depends on the endpoint; many only return IPv4 | First-class IPv4 and IPv6 support across DNS and STUN |
+| **Dependency in code** | Needs shell-out or an HTTP client just to get an IP | Embeddable Rust library, no HTTP dependency needed (DNS + STUN only) |
+| **Offline-friendly** | Requires an HTTP-capable environment / TLS stack | DNS and STUN work in minimal environments with just UDP |
+
+> **💡 Note:** Some strict enterprise networks block outbound UDP entirely. In those environments, DNS and STUN won't work.
+> Enable the `http` feature to add HTTP-based providers as a fallback — the library will automatically
+> try them if UDP-based providers fail.
+
 ## CLI Tool — `ipd`
 
 A command-line tool powered by this library. Get your public IP in one command:
