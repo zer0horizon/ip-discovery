@@ -2,6 +2,7 @@
 name = "ipd"
 version = "0.2.1"
 edition = "2021"
+publish = false
 rust-version = "1.85"
 description = "CLI tool to discover your public IP address"
 license = "MIT OR Apache-2.0"
@@ -15,8 +16,11 @@ categories = ["command-line-utilities", "network-programming"]
 [[bin]]
 name = "ipd"
 
+[package.metadata.dist]
+dist = true
+
 [dependencies]
-ip-discovery = { path = "..", features = ["all"] }
+ip-discovery = { version = "0.2", path = "..", features = ["all"] }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1"
