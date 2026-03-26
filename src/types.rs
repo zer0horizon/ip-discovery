@@ -5,6 +5,7 @@ use std::time::Duration;
 
 /// Protocol used to detect public IP
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Protocol {
     /// DNS-based detection (e.g., OpenDNS, Cloudflare DNS)
     Dns,
@@ -26,6 +27,7 @@ impl std::fmt::Display for Protocol {
 
 /// IP version preference
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum IpVersion {
     /// IPv4 only
     V4,
@@ -82,6 +84,7 @@ impl std::fmt::Display for ProviderResult {
 /// Each variant represents a specific provider service.
 /// Use with [`Config::builder()`](crate::Config::builder) to select which providers to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum BuiltinProvider {
     // --- STUN providers ---
     /// Google STUN server (stun.l.google.com)

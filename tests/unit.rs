@@ -105,18 +105,6 @@ mod error_tests {
     use ip_discovery::{Error, ProviderError};
 
     #[test]
-    fn test_error_display_timeout() {
-        let err = Error::Timeout;
-        assert_eq!(format!("{}", err), "operation timed out");
-    }
-
-    #[test]
-    fn test_error_display_no_providers() {
-        let err = Error::NoProviders;
-        assert_eq!(format!("{}", err), "no providers configured");
-    }
-
-    #[test]
     fn test_error_display_no_version() {
         let err = Error::NoProvidersForVersion;
         assert!(format!("{}", err).contains("IP version"));
@@ -127,6 +115,7 @@ mod error_tests {
         let err = Error::ConsensusNotReached {
             required: 3,
             got: 1,
+            errors: vec![],
         };
         let msg = format!("{}", err);
         assert!(msg.contains("3"));
@@ -165,6 +154,7 @@ mod error_tests {
         let err = Error::ConsensusNotReached {
             required: 2,
             got: 0,
+            errors: vec![],
         };
         let msg = format!("{}", err);
         assert!(msg.contains("0"));

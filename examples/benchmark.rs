@@ -260,5 +260,6 @@ fn version_str(v: IpVersion) -> &'static str {
         IpVersion::V4 => "IPv4",
         IpVersion::V6 => "IPv6",
         IpVersion::Any => "Any",
+        _ => "Unknown",
     }
 }

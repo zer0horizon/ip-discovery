@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-26
+
+### Changed
+
+- **BREAKING:** Removed `async_trait` and `tracing` dependencies
+- **BREAKING:** All public enums are now `#[non_exhaustive]`
+- **BREAKING:** Removed unused `Error::Timeout` and `Error::NoProviders` variants
+- **BREAKING:** `Error::ConsensusNotReached` now includes provider errors
+- **BREAKING:** Removed inner STUN timeout; resolver timeout is now the single source of truth
+- Updated `getrandom` to v0.4
+
+### Fixed
+
+- Corrected DNS buffer size RFC reference (RFC 8020 → RFC 6891)
+
+### Documentation
+
+- Added limitations and security notes to DNS and STUN modules
+
 ## [0.2.0] - 2026-03-18
 
 ### Changed

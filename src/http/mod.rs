@@ -9,11 +9,11 @@ pub use providers::{default_providers, provider_names};
 use crate::error::ProviderError;
 use crate::provider::Provider;
 use crate::types::{IpVersion, Protocol};
-use async_trait::async_trait;
 use reqwest::Client;
+use std::future::Future;
 use std::net::IpAddr;
+use std::pin::Pin;
 use std::str::FromStr;
-use tracing::debug;
 
 /// Response parser function type
 pub type ResponseParser = fn(&str) -> Option<IpAddr>;
@@ -86,8 +86,6 @@ impl HttpProvider {
             .get_url(version)
             .ok_or_else(|| ProviderError::message(&self.name, "no URL for IP version"))?;
 
-        debug!(provider = %self.name, url = %url, "fetching IP via HTTP");
-
         let response = self
             .client
             .get(url)
@@ -122,7 +120,6 @@ impl std::fmt::Debug for HttpProvider {
     }
 }
 
-#[async_trait]
 impl Provider for HttpProvider {
     fn name(&self) -> &str {
         &self.name
@@ -140,7 +137,10 @@ impl Provider for HttpProvider {
         self.url_v6.is_some()
     }
 
-    async fn get_ip(&self, version: IpVersion) -> Result<IpAddr, ProviderError> {
-        self.fetch(version).await
+    fn get_ip(
+        &self,
+        version: IpVersion,
+    ) -> Pin<Box<dyn Future<Output = Result<IpAddr, ProviderError>> + Send + '_>> {
+        Box::pin(self.fetch(version))
     }
 }

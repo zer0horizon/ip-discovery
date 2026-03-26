@@ -2,6 +2,11 @@
 //!
 //! Uses DNS TXT/A records from special domains to detect public IP.
 //! This implementation uses raw UDP sockets instead of external DNS libraries.
+//!
+//! # Security
+//!
+//! Transaction IDs are generated with [`getrandom`] (OS-level CSPRNG),
+//! preventing DNS transaction ID spoofing attacks.
 
 mod protocol;
 pub(crate) mod providers;
@@ -11,12 +16,12 @@ pub use providers::{default_providers, provider_names};
 use crate::error::ProviderError;
 use crate::provider::Provider;
 use crate::types::{IpVersion, Protocol};
-use async_trait::async_trait;
 use protocol::{build_query, parse_response, DnsClass, RecordType};
+use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
 use std::str::FromStr;
 use tokio::net::UdpSocket;
-use tracing::debug;
 
 /// Record type for DNS query
 #[derive(Debug, Clone, Copy)]
@@ -90,13 +95,6 @@ impl DnsProvider {
             _ => self.resolver_addr,
         };
 
-        debug!(
-            provider = %self.name,
-            domain = %self.query_domain,
-            resolver = %resolver,
-            "querying DNS"
-        );
-
         // Determine record type based on version and configured type
         let record_type = match self.record_type {
             DnsRecordType::Address => match version {
@@ -127,7 +125,7 @@ impl DnsProvider {
             .map_err(|e| ProviderError::new(&self.name, e))?;
 
         // Receive response
-        let mut buf = [0u8; 1232]; // RFC 8020 recommended safe UDP DNS size
+        let mut buf = [0u8; 1232]; // DNS Flag Day 2020 safe UDP size (RFC 6891 EDNS0)
         let len = socket
             .recv(&mut buf)
             .await
@@ -161,7 +159,6 @@ impl DnsProvider {
     }
 }
 
-#[async_trait]
 impl Provider for DnsProvider {
     fn name(&self) -> &str {
         &self.name
@@ -179,7 +176,10 @@ impl Provider for DnsProvider {
         self.supports_v6
     }
 
-    async fn get_ip(&self, version: IpVersion) -> Result<IpAddr, ProviderError> {
-        self.query(version).await
+    fn get_ip(
+        &self,
+        version: IpVersion,
+    ) -> Pin<Box<dyn Future<Output = Result<IpAddr, ProviderError>> + Send + '_>> {
+        Box::pin(self.query(version))
     }
 }

@@ -3,15 +3,25 @@
 //! This module is the core orchestrator: it takes a [`Config`](crate::Config),
 //! queries providers according to the chosen [`Strategy`](crate::Strategy),
 //! and returns a [`ProviderResult`].
+//!
+//! The [`select_first`] and [`join_all_vec`] helper functions replace
+//! `futures::select_all` / `futures::join_all` to avoid pulling in the
+//! `futures-util` crate as a dependency.
 
 use crate::config::{Config, Strategy};
 use crate::error::{Error, ProviderError};
+use crate::provider::BoxedProvider;
 use crate::types::ProviderResult;
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::IpAddr;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Instant;
 use tokio::time::timeout;
-use tracing::{debug, warn};
+
+/// Boxed future returning a fallible provider result.
+type BoxFut<'a> = Pin<Box<dyn Future<Output = Result<ProviderResult, ProviderError>> + Send + 'a>>;
 
 /// Coordinates IP detection across configured providers.
 ///
@@ -27,6 +37,41 @@ impl Resolver {
         Self { config }
     }
 
+    /// Return an iterator over providers that support the configured IP version.
+    #[inline]
+    fn matching_providers(&self) -> impl Iterator<Item = &BoxedProvider> {
+        self.config
+            .providers
+            .iter()
+            .filter(|p| p.supports_version(self.config.version))
+    }
+
+    /// Wrap a single provider call in a timeout, returning a boxed future that
+    /// produces either a [`ProviderResult`] or a [`ProviderError`].
+    fn make_provider_future<'a>(&'a self, provider: &'a BoxedProvider) -> BoxFut<'a> {
+        let provider_name = provider.name().to_string();
+        let protocol = provider.protocol();
+        let start = Instant::now();
+        let fut = provider.get_ip(self.config.version);
+        let timeout_duration = self.config.timeout;
+
+        Box::pin(async move {
+            match timeout(timeout_duration, fut).await {
+                Ok(Ok(ip)) => {
+                    let latency = start.elapsed();
+                    Ok(ProviderResult {
+                        ip,
+                        provider: provider_name,
+                        protocol,
+                        latency,
+                    })
+                }
+                Ok(Err(e)) => Err(e),
+                Err(_) => Err(ProviderError::message(provider_name, "timeout")),
+            }
+        })
+    }
+
     /// Resolve the public IP address using the configured strategy.
     ///
     /// # Errors
@@ -35,179 +80,80 @@ impl Resolver {
     /// - [`Error::AllProvidersFailed`] — every provider either failed or timed out.
     /// - [`Error::ConsensusNotReached`] — (consensus strategy) too few providers agreed.
     pub async fn resolve(&self) -> Result<ProviderResult, Error> {
-        let has_matching = self
-            .config
-            .providers
-            .iter()
-            .any(|p| p.supports_version(self.config.version));
-
-        if !has_matching {
+        if self.matching_providers().next().is_none() {
             return Err(Error::NoProvidersForVersion);
         }
 
         match self.config.strategy {
             Strategy::First => self.resolve_first().await,
             Strategy::Race => self.resolve_race().await,
-            Strategy::Consensus { min_agree } => {
-                let min = min_agree.max(2);
-                self.resolve_consensus(min).await
-            }
+            Strategy::Consensus { min_agree } => self.resolve_consensus(min_agree).await,
         }
     }
 
-    /// Try providers in order, return first success
+    /// Try providers in order, return first success.
     async fn resolve_first(&self) -> Result<ProviderResult, Error> {
         let mut errors = Vec::new();
 
-        for provider in self
-            .config
-            .providers
-            .iter()
-            .filter(|p| p.supports_version(self.config.version))
-        {
-            let start = Instant::now();
-            debug!(provider = provider.name(), "trying provider");
-
-            match timeout(self.config.timeout, provider.get_ip(self.config.version)).await {
-                Ok(Ok(ip)) => {
-                    let latency = start.elapsed();
-                    debug!(
-                        provider = provider.name(),
-                        ip = %ip,
-                        latency = ?latency,
-                        "got IP from provider"
-                    );
-                    return Ok(ProviderResult {
-                        ip,
-                        provider: provider.name().to_string(),
-                        protocol: provider.protocol(),
-                        latency,
-                    });
-                }
-                Ok(Err(e)) => {
-                    warn!(provider = provider.name(), error = %e, "provider failed");
-                    errors.push(e);
-                }
-                Err(_) => {
-                    warn!(provider = provider.name(), "provider timed out");
-                    errors.push(ProviderError::message(provider.name(), "timeout"));
-                }
+        for provider in self.matching_providers() {
+            match self.make_provider_future(provider).await {
+                Ok(result) => return Ok(result),
+                Err(e) => errors.push(e),
             }
         }
 
         Err(Error::AllProvidersFailed(errors))
     }
 
-    /// Race all providers, return fastest result
+    /// Race all providers concurrently, return fastest success.
     async fn resolve_race(&self) -> Result<ProviderResult, Error> {
-        use futures_util::future::select_all;
-
-        let version = self.config.version;
-        let timeout_duration = self.config.timeout;
-
-        let futures: Vec<_> = self
-            .config
-            .providers
-            .iter()
-            .filter(|p| p.supports_version(version))
-            .map(|provider| {
-                let provider_name = provider.name().to_string();
-                let protocol = provider.protocol();
-                let start = Instant::now();
-                let fut = provider.get_ip(version);
-
-                Box::pin(async move {
-                    match timeout(timeout_duration, fut).await {
-                        Ok(Ok(ip)) => {
-                            let latency = start.elapsed();
-                            Ok(ProviderResult {
-                                ip,
-                                provider: provider_name,
-                                protocol,
-                                latency,
-                            })
-                        }
-                        Ok(Err(e)) => Err(e),
-                        Err(_) => Err(ProviderError::message(provider_name, "timeout")),
-                    }
-                })
-            })
+        let mut futures: Vec<BoxFut<'_>> = self
+            .matching_providers()
+            .map(|p| self.make_provider_future(p))
             .collect();
 
+        // Defensive: matching_providers() was already checked in resolve(),
+        // but guard against direct calls to this method.
         if futures.is_empty() {
             return Err(Error::NoProvidersForVersion);
         }
 
-        let mut futures = futures;
         let mut errors = Vec::new();
 
         while !futures.is_empty() {
-            let (result, _index, remaining) = select_all(futures).await;
+            let (result, _index, remaining) = select_first(futures).await;
             futures = remaining;
 
             match result {
-                Ok(provider_result) => {
-                    debug!(
-                        provider = %provider_result.provider,
-                        ip = %provider_result.ip,
-                        latency = ?provider_result.latency,
-                        "race won"
-                    );
-                    return Ok(provider_result);
-                }
-                Err(e) => {
-                    errors.push(e);
-                }
+                Ok(provider_result) => return Ok(provider_result),
+                Err(e) => errors.push(e),
             }
         }
 
         Err(Error::AllProvidersFailed(errors))
     }
 
-    /// Query all providers and require consensus
+    /// Query all providers and require consensus.
     async fn resolve_consensus(&self, min_agree: usize) -> Result<ProviderResult, Error> {
-        use futures_util::future::join_all;
-
-        let version = self.config.version;
-        let timeout_duration = self.config.timeout;
-
-        let futures: Vec<_> = self
-            .config
-            .providers
-            .iter()
-            .filter(|p| p.supports_version(version))
-            .map(|provider| {
-                let provider_name = provider.name().to_string();
-                let protocol = provider.protocol();
-                let start = Instant::now();
-                let fut = provider.get_ip(version);
-
-                async move {
-                    match timeout(timeout_duration, fut).await {
-                        Ok(Ok(ip)) => {
-                            let latency = start.elapsed();
-                            Some(ProviderResult {
-                                ip,
-                                provider: provider_name,
-                                protocol,
-                                latency,
-                            })
-                        }
-                        _ => None,
-                    }
-                }
-            })
+        let futures: Vec<BoxFut<'_>> = self
+            .matching_providers()
+            .map(|p| self.make_provider_future(p))
             .collect();
 
         if futures.is_empty() {
             return Err(Error::NoProvidersForVersion);
         }
 
-        let results: Vec<Option<ProviderResult>> = join_all(futures).await;
+        let all_results = join_all_vec(futures).await;
 
         let mut ip_results: HashMap<IpAddr, Vec<ProviderResult>> = HashMap::new();
-        for result in results.into_iter().flatten() {
-            ip_results.entry(result.ip).or_default().push(result);
+        let mut errors = Vec::new();
+
+        for result in all_results {
+            match result {
+                Ok(pr) => ip_results.entry(pr.ip).or_default().push(pr),
+                Err(e) => errors.push(e),
+            }
         }
 
         let mut best: Option<(IpAddr, usize)> = None;
@@ -225,28 +171,89 @@ impl Resolver {
 
         match best {
             Some((ip, _)) => {
-                // Safety: `best` was chosen from `ip_results`, so the key always exists
-                let providers = ip_results.remove(&ip).unwrap_or_default();
-                let Some(fastest) = providers.into_iter().min_by_key(|p| p.latency) else {
-                    return Err(Error::ConsensusNotReached {
-                        required: min_agree,
-                        got: 0,
-                    });
-                };
-                debug!(
-                    ip = %ip,
-                    provider = %fastest.provider,
-                    "consensus reached"
-                );
-                Ok(fastest)
+                if let Some(providers) = ip_results.remove(&ip) {
+                    if let Some(fastest) = providers.into_iter().min_by_key(|p| p.latency) {
+                        return Ok(fastest);
+                    }
+                }
+                Err(Error::ConsensusNotReached {
+                    required: min_agree,
+                    got: 0,
+                    errors,
+                })
             }
             None => {
                 let max_agreement = ip_results.values().map(|v| v.len()).max().unwrap_or(0);
                 Err(Error::ConsensusNotReached {
                     required: min_agree,
                     got: max_agreement,
+                    errors,
                 })
             }
         }
     }
+}
+
+/// Select the first future to complete from a vec, returning the result,
+/// the index in the **original** vec, and the remaining futures.
+///
+/// Note: `remaining` is **unordered** — `swap_remove` is used internally,
+/// so the positions no longer correspond to the original input order.
+///
+/// Equivalent to `futures::select_all`, inlined to avoid the dependency.
+///
+/// # Polling safety
+///
+/// All futures are `Pin<Box<...>>` (i.e. `Unpin`), so `Pin::new(fut).poll(cx)`
+/// is sound. Waker registration is delegated to each sub-future's poll impl;
+/// when any sub-future's I/O becomes ready the shared waker is notified,
+/// causing the entire `poll_fn` closure to be re-polled.
+async fn select_first<F: Future + Unpin>(mut futures: Vec<F>) -> (F::Output, usize, Vec<F>) {
+    std::future::poll_fn(|cx: &mut Context<'_>| {
+        for (i, fut) in futures.iter_mut().enumerate() {
+            if let Poll::Ready(output) = Pin::new(fut).poll(cx) {
+                futures.swap_remove(i);
+                return Poll::Ready((output, i, std::mem::take(&mut futures)));
+            }
+        }
+        Poll::Pending
+    })
+    .await
+}
+
+/// Join all futures in a vec, returning a vec of results in the original order.
+///
+/// Equivalent to `futures::join_all`, inlined to avoid the dependency.
+///
+/// # Polling safety
+///
+/// Same as [`select_first`]. The `is_some()` guard ensures each future is
+/// polled only while still pending, and `done` is never double-counted.
+async fn join_all_vec<T, F: Future<Output = T> + Unpin>(mut futures: Vec<F>) -> Vec<T> {
+    let total = futures.len();
+    let mut results: Vec<Option<T>> = (0..total).map(|_| None).collect();
+    let mut done = 0;
+
+    std::future::poll_fn(|cx: &mut Context<'_>| {
+        for (i, fut) in futures.iter_mut().enumerate() {
+            if results[i].is_some() {
+                continue;
+            }
+            if let Poll::Ready(output) = Pin::new(fut).poll(cx) {
+                results[i] = Some(output);
+                done += 1;
+            }
+        }
+        if done == total {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    })
+    .await;
+
+    results
+        .into_iter()
+        .map(|r| r.expect("bug: future completed but result slot is empty"))
+        .collect()
 }

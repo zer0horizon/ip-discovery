@@ -9,6 +9,7 @@ use std::time::Duration;
 
 /// Strategy for resolving the public IP across multiple providers.
 #[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub enum Strategy {
     /// Try providers sequentially, return the first success.
     #[default]
@@ -16,9 +17,11 @@ pub enum Strategy {
     /// Race all providers concurrently, return the fastest success.
     Race,
     /// Query all providers, require multiple to agree on the same IP.
+    ///
+    /// Values of `min_agree` below 2 are clamped to 2 at build time,
+    /// since consensus with fewer than 2 providers is meaningless.
     Consensus {
-        /// Minimum number of providers that must return the same IP.
-        /// Automatically clamped to at least 2.
+        /// Minimum number of providers that must return the same IP (≥ 2).
         min_agree: usize,
     },
 }
@@ -133,9 +136,16 @@ impl ConfigBuilder {
         self
     }
 
-    /// Set resolution strategy
+    /// Set resolution strategy.
+    ///
+    /// For [`Strategy::Consensus`], `min_agree` is clamped to at least 2.
     pub fn strategy(mut self, strategy: Strategy) -> Self {
-        self.strategy = strategy;
+        self.strategy = match strategy {
+            Strategy::Consensus { min_agree } => Strategy::Consensus {
+                min_agree: min_agree.max(2),
+            },
+            other => other,
+        };
         self
     }
 

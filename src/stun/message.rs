@@ -70,8 +70,7 @@ impl StunMessage {
     /// Create a new STUN message
     pub fn new(msg_type: StunMethod) -> Self {
         let mut transaction_id = [0u8; 12];
-        // Best-effort randomness; a zeroed ID still produces a valid STUN message
-        let _ = getrandom::getrandom(&mut transaction_id);
+        let _ = getrandom::fill(&mut transaction_id);
 
         Self {
             msg_type,

@@ -60,7 +60,7 @@ impl Error for DnsQueryError {}
 /// Build a DNS query packet for the given domain, record type, and class.
 ///
 /// Returns the raw bytes of a standard DNS query with recursion desired.
-/// The transaction ID is randomly generated.
+/// The transaction ID is cryptographically random (`getrandom`).
 pub fn build_query(
     domain: &str,
     record_type: RecordType,
@@ -68,9 +68,9 @@ pub fn build_query(
 ) -> Result<Vec<u8>, DnsQueryError> {
     let mut packet = Vec::with_capacity(512);
 
-    // Transaction ID (random, best-effort)
+    // Transaction ID (cryptographically random)
     let mut id_bytes = [0u8; 2];
-    let _ = getrandom::getrandom(&mut id_bytes);
+    let _ = getrandom::fill(&mut id_bytes);
     packet.extend_from_slice(&id_bytes);
 
     // Flags: standard query, recursion desired

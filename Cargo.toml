@@ -3,7 +3,7 @@ members = ["ipd"]
 
 [package]
 name = "ip-discovery"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.85"
 description = "A lightweight, high-performance library for detecting public IP addresses via DNS, HTTP, and STUN protocols"
@@ -33,12 +33,8 @@ all = ["dns", "http", "stun"]
 native-tls = ["reqwest?/native-tls"]
 
 [dependencies]
-thiserror = "2"
+getrandom = { version = "0.4", default-features = false }
 tokio = { version = "1", features = ["net", "time"] }
-async-trait = "0.1"
-tracing = "0.1"
-getrandom = { version = "0.2", features = ["std"] }
-futures-util = "0.3"
 
 # Optional - HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }

@@ -5,11 +5,11 @@
 
 use crate::error::ProviderError;
 use crate::types::{IpVersion, Protocol};
-use async_trait::async_trait;
+use std::future::Future;
 use std::net::IpAddr;
+use std::pin::Pin;
 
 /// Trait for IP detection providers
-#[async_trait]
 pub trait Provider: Send + Sync {
     /// Provider name for identification
     fn name(&self) -> &str;
@@ -37,7 +37,10 @@ pub trait Provider: Send + Sync {
     }
 
     /// Get the public IP address
-    async fn get_ip(&self, version: IpVersion) -> Result<IpAddr, ProviderError>;
+    fn get_ip(
+        &self,
+        version: IpVersion,
+    ) -> Pin<Box<dyn Future<Output = Result<IpAddr, ProviderError>> + Send + '_>>;
 }
 
 /// Type-erased provider, used internally to store heterogeneous providers.
@@ -47,7 +50,6 @@ pub type BoxedProvider = Box<dyn Provider>;
 /// Always returns an error explaining which feature is missing.
 pub(crate) struct DisabledProvider(pub(crate) String);
 
-#[async_trait]
 impl Provider for DisabledProvider {
     fn name(&self) -> &str {
         &self.0
@@ -57,10 +59,16 @@ impl Provider for DisabledProvider {
         Protocol::Http // doesn't matter, will always error
     }
 
-    async fn get_ip(&self, _version: IpVersion) -> Result<IpAddr, ProviderError> {
-        Err(ProviderError::message(
-            &self.0,
-            "provider feature not enabled",
-        ))
+    fn get_ip(
+        &self,
+        _version: IpVersion,
+    ) -> Pin<Box<dyn Future<Output = Result<IpAddr, ProviderError>> + Send + '_>> {
+        let name = self.0.clone();
+        Box::pin(async move {
+            Err(ProviderError::message(
+                &name,
+                "provider feature not enabled",
+            ))
+        })
     }
 }

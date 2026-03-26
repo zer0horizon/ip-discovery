@@ -3,33 +3,51 @@
 use std::fmt;
 
 /// Main error type for IP detection
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// All configured providers failed
-    #[error("all providers failed: {0:?}")]
     AllProvidersFailed(Vec<ProviderError>),
 
-    /// Operation timed out
-    #[error("operation timed out")]
-    Timeout,
-
-    /// No providers configured
-    #[error("no providers configured")]
-    NoProviders,
-
     /// No providers support the requested IP version
-    #[error("no providers support the requested IP version")]
     NoProvidersForVersion,
 
     /// Consensus could not be reached
-    #[error("consensus could not be reached (required {required}, got {got})")]
     ConsensusNotReached {
         /// Minimum number of providers that needed to agree
         required: usize,
-        /// Number of providers that actually agreed
+        /// Maximum number of providers that agreed on the same IP
         got: usize,
+        /// Errors from providers that failed during consensus
+        errors: Vec<ProviderError>,
     },
 }
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::AllProvidersFailed(errors) => write!(f, "all providers failed: {:?}", errors),
+            Error::NoProvidersForVersion => {
+                write!(f, "no providers support the requested IP version")
+            }
+            Error::ConsensusNotReached {
+                required,
+                got,
+                errors,
+            } => {
+                write!(
+                    f,
+                    "consensus not reached (required {}, got {}, {} provider errors)",
+                    required,
+                    got,
+                    errors.len()
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for Error {}
 
 /// Error from a specific provider
 #[derive(Debug)]

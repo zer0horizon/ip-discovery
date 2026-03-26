@@ -1,6 +1,17 @@
 //! STUN protocol implementation for public IP detection
 //!
 //! Implements a minimal RFC 5389 STUN client for detecting public IP addresses.
+//!
+//! # Limitations
+//!
+//! - **No retransmission**: RFC 5389 §7.2.1 recommends retransmitting requests
+//!   with exponential backoff (RTO ≥ 500 ms). This implementation sends a single
+//!   binding request; packet loss is handled by the resolver's fallback strategy.
+//!
+//! # Security
+//!
+//! Transaction IDs are generated with [`getrandom`] (OS-level CSPRNG),
+//! per RFC 8489 requirements.
 
 mod message;
 pub(crate) mod providers;
@@ -10,16 +21,11 @@ pub use providers::{default_providers, provider_names};
 use crate::error::ProviderError;
 use crate::provider::Provider;
 use crate::types::{IpVersion, Protocol};
-use async_trait::async_trait;
 use message::{StunMessage, StunMethod};
+use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
-use std::time::Duration;
+use std::pin::Pin;
 use tokio::net::UdpSocket;
-use tokio::time::timeout;
-use tracing::debug;
-
-/// Default STUN timeout
-const STUN_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// STUN provider for IP detection
 #[derive(Debug, Clone)]
@@ -80,12 +86,6 @@ impl StunProvider {
         let request = StunMessage::new(StunMethod::Request);
         let request_bytes = request.encode();
 
-        debug!(
-            server = %addr,
-            transaction_id = ?request.transaction_id(),
-            "sending STUN binding request"
-        );
-
         socket
             .send(&request_bytes)
             .await
@@ -93,9 +93,9 @@ impl StunProvider {
 
         // Receive response
         let mut buf = [0u8; 576]; // Minimum MTU
-        let len = timeout(STUN_TIMEOUT, socket.recv(&mut buf))
+        let len = socket
+            .recv(&mut buf)
             .await
-            .map_err(|_| ProviderError::message(&self.name, "timeout"))?
             .map_err(|e| ProviderError::new(&self.name, e))?;
 
         // Parse response
@@ -117,7 +117,6 @@ impl StunProvider {
     }
 }
 
-#[async_trait]
 impl Provider for StunProvider {
     fn name(&self) -> &str {
         &self.name
@@ -135,7 +134,10 @@ impl Provider for StunProvider {
         true
     }
 
-    async fn get_ip(&self, version: IpVersion) -> Result<IpAddr, ProviderError> {
-        self.binding_request(version).await
+    fn get_ip(
+        &self,
+        version: IpVersion,
+    ) -> Pin<Box<dyn Future<Output = Result<IpAddr, ProviderError>> + Send + '_>> {
+        Box::pin(self.binding_request(version))
     }
 }
