@@ -14,7 +14,7 @@ documentation = "https://docs.rs/ip-discovery"
 readme = "README.md"
 authors = ["zer0horizon"]
 keywords = ["ip", "public-ip", "stun", "dns", "network"]
-categories = ["network-programming"]
+categories = ["network-programming", "command-line-utilities"]
 exclude = ["target/", ".github/"]
 
 [package.metadata.docs.rs]

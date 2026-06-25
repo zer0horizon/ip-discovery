@@ -1,10 +1,10 @@
-# ip-discovery
+# ip-discovery - Fast public IP lookup
 
 [![Crates.io](https://img.shields.io/crates/v/ip-discovery.svg)](https://crates.io/crates/ip-discovery)
 [![docs.rs](https://docs.rs/ip-discovery/badge.svg)](https://docs.rs/ip-discovery)
 [![MIT/Apache-2.0](https://img.shields.io/crates/l/ip-discovery.svg)](./LICENSE-MIT)
 
-Detect your public IP address using DNS, STUN, or HTTP — with built-in fallback across trusted providers.
+A Rust library and CLI to detect your public IP address using DNS, STUN, or HTTP — with built-in fallback across trusted providers.
 
 ## Why ip-discovery?
 
