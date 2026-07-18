@@ -132,10 +132,38 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cargo publish --package ip-discovery
+          # Publish core library
+          echo "Publishing ip-discovery..."
+          output_lib=$(cargo publish --package ip-discovery 2>&1)
+          status_lib=$?
+          if [ $status_lib -ne 0 ]; then
+            if echo "$output_lib" | grep -q -i "already exists"; then
+              echo "ip-discovery@0.4.0 is already published. Skipping."
+            else
+              echo "$output_lib"
+              exit $status_lib
+            fi
+          else
+            echo "$output_lib"
+          fi
+
           echo "Waiting 30 seconds for crates.io to index the library..."
           sleep 30
-          cargo publish --package ipd
+
+          # Publish CLI utility
+          echo "Publishing ipd..."
+          output_cli=$(cargo publish --package ipd 2>&1)
+          status_cli=$?
+          if [ $status_cli -ne 0 ]; then
+            if echo "$output_cli" | grep -q -i "already exists"; then
+              echo "ipd@0.4.0 is already published. Skipping."
+            else
+              echo "$output_cli"
+              exit $status_cli
+            fi
+          else
+            echo "$output_cli"
+          fi
 
       # 2. Publish to npm
       - name: Publish to npm
@@ -143,4 +171,15 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           cd node
-          npm publish --access public
+          
+          # Dynamically extract package name and version
+          pkg_name=$(node -p "require('./package.json').name")
+          pkg_version=$(node -p "require('./package.json').version")
+          
+          echo "Checking if $pkg_name@$pkg_version already exists on npm registry..."
+          if npm view "$pkg_name@$pkg_version" version >/dev/null 2>&1; then
+            echo "Package $pkg_name@$pkg_version is already published. Skipping."
+          else
+            echo "Publishing $pkg_name@$pkg_version to npm..."
+            npm publish --access public
+          fi
