@@ -134,8 +134,8 @@ jobs:
         run: |
           # Publish core library
           echo "Publishing ip-discovery..."
-          output_lib=$(cargo publish --package ip-discovery 2>&1)
-          status_lib=$?
+          status_lib=0
+          output_lib=$(cargo publish --package ip-discovery 2>&1) || status_lib=$?
           if [ $status_lib -ne 0 ]; then
             if echo "$output_lib" | grep -q -i "already exists"; then
               echo "ip-discovery@0.4.0 is already published. Skipping."
@@ -152,8 +152,8 @@ jobs:
 
           # Publish CLI utility
           echo "Publishing ipd..."
-          output_cli=$(cargo publish --package ipd 2>&1)
-          status_cli=$?
+          status_cli=0
+          output_cli=$(cargo publish --package ipd 2>&1) || status_cli=$?
           if [ $status_cli -ne 0 ]; then
             if echo "$output_cli" | grep -q -i "already exists"; then
               echo "ipd@0.4.0 is already published. Skipping."
