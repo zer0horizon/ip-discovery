@@ -1,0 +1,21 @@
+{
+  "name": "@zer0horizon/ip-discovery",
+  "version": "0.4.0",
+  "description": "Lightweight, high-performance library to discover your public IP address",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "name": "ip-discovery",
+    "triples": {
+      "defaults": true
+    }
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "test": "node --test test.js"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0"
+  }
+}

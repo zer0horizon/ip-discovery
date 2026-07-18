@@ -83,6 +83,7 @@ cargo install ipd
 ipd                    # Plain IP output
 ipd -4                 # IPv4 only
 ipd -6                 # IPv6 only
+ipd -l                 # Local private IP (alias --private)
 ipd -f json            # JSON output
 ipd -f verbose         # Verbose output with provider info
 ipd -s race            # Race all providers, return fastest
@@ -110,7 +111,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ip-discovery = "0.2"
+ip-discovery = "0.4"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -135,6 +136,65 @@ use ip_discovery::{get_ipv4, get_ipv6};
 let v4 = get_ipv4().await?;
 let v6 = get_ipv6().await?;
 ```
+
+To lookup local private IP addresses (synchronously and offline-friendly):
+
+```rust
+use ip_discovery::{get_private_ip, get_private_ipv6};
+
+if let Some(local_v4) = get_private_ip() {
+    println!("Local IPv4: {}", local_v4);
+}
+if let Some(local_v6) = get_private_ipv6() {
+    println!("Local IPv6: {}", local_v6);
+}
+```
+
+## Node.js / npm
+
+The library can also be used in Node.js environments via prebuilt native bindings.
+
+### Install
+
+```bash
+npm install @zer0horizon/ip-discovery
+```
+
+### Usage (JavaScript/TypeScript)
+
+```javascript
+const { getIp, getIpv4, getIpv6, getPrivateIp, getPrivateIpv6, IpVersion, Strategy, Protocol, BuiltinProvider } = require('@zer0horizon/ip-discovery');
+
+// Simple lookup (Public IP)
+const result = await getIpv4();
+console.log(`Public IP: ${result.ip} (via ${result.provider}, latency: ${result.latencyMs}ms)`);
+
+// Local lookup (Private IP - Synchronous)
+console.log(`Local IPv4: ${getPrivateIp()}`);
+console.log(`Local IPv6: ${getPrivateIpv6()}`);
+
+// Custom configuration using type-safe enums
+const config = {
+  timeoutMs: 5000,
+  version: IpVersion.V4,
+  protocols: [Protocol.Dns, Protocol.Stun],
+  strategy: Strategy.Race,
+  providers: [BuiltinProvider.CloudflareStun, BuiltinProvider.GoogleDns]
+};
+
+const customResult = await getIp(config);
+console.log(`IP: ${customResult.ip}`);
+```
+
+### Exported Enums
+
+The package exports type-safe enums matching the Rust configuration options:
+
+- **`IpVersion`**: `V4`, `V6`, `Any`
+- **`Strategy`**: `First`, `Race`, `Consensus`
+- **`Protocol`**: `Dns`, `Http`, `Stun`
+- **`BuiltinProvider`**: `GoogleStun`, `GoogleStun1`, `GoogleStun2`, `CloudflareStun`, `GoogleDns`, `CloudflareDns`, `OpenDns`, `CloudflareHttp`, `Aws`
+
 
 ## Configuration
 
@@ -208,13 +268,13 @@ All built-in providers are from tier-1 infrastructure companies:
 By default, only DNS and STUN are enabled — zero network library dependencies, fast compile times. To also use HTTP providers:
 
 ```toml
-ip-discovery = { version = "0.2", features = ["http"] }
+ip-discovery = { version = "0.4", features = ["http"] }
 ```
 
 Or enable everything:
 
 ```toml
-ip-discovery = { version = "0.2", features = ["all"] }
+ip-discovery = { version = "0.4", features = ["all"] }
 ```
 
 ## Performance

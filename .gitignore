@@ -6,3 +6,11 @@ Cargo.lock
 .idea/
 .vscode/
 *.iml
+.DS_Store
+
+# Scratch directories
+/scratch/
+
+# Node.js
+node_modules/
+*.node

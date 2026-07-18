@@ -1,10 +1,10 @@
 [workspace]
-members = ["ipd"]
+members = ["ipd", "node"]
 resolver = "3"
 
 [package]
 name = "ip-discovery"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.85"
 description = "A lightweight, high-performance library for detecting public IP addresses via DNS, HTTP, and STUN protocols"

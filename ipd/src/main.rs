@@ -30,6 +30,10 @@ struct Cli {
     /// Timeout per provider in seconds
     #[arg(short, long, default_value = "10")]
     timeout: u64,
+
+    /// Show local private IP address instead of public IP
+    #[arg(short = 'l', long, alias = "local")]
+    private: bool,
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -56,6 +60,46 @@ enum ProtocolArg {
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    if cli.private {
+        let opt_ip = match (cli.ipv4, cli.ipv6) {
+            (false, true) => ip_discovery::get_private_ipv6(),
+            _ => ip_discovery::get_private_ip().or_else(|| ip_discovery::get_private_ipv6()),
+        };
+
+        match opt_ip {
+            Some(ip) => {
+                match cli.format {
+                    OutputFormat::Plain => {
+                        println!("{}", ip);
+                    }
+                    OutputFormat::Json => {
+                        let json = serde_json::json!({
+                            "ip": ip.to_string(),
+                            "type": if ip.is_ipv4() { "IPv4" } else { "IPv6" },
+                            "scope": "private",
+                        });
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&json).unwrap_or_default()
+                        );
+                    }
+                    OutputFormat::Verbose => {
+                        println!("{}", ip);
+                        println!("  scope: private");
+                        println!("  type:  {}", if ip.is_ipv4() { "IPv4" } else { "IPv6" });
+                    }
+                }
+                return ExitCode::SUCCESS;
+            }
+            None => {
+                eprintln!(
+                    "error: no local network interface found with a valid private IP address"
+                );
+                return ExitCode::FAILURE;
+            }
+        }
+    }
 
     let version = match (cli.ipv4, cli.ipv6) {
         (true, false) => IpVersion::V4,

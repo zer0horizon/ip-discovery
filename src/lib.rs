@@ -129,3 +129,25 @@ pub async fn get_ip_with(config: Config) -> Result<ProviderResult, Error> {
     let resolver = Resolver::new(config);
     resolver.resolve().await
 }
+
+/// Get the primary local private IPv4 address.
+///
+/// This function queries the OS routing table by creating a connectionless
+/// UDP socket and connecting it to a public destination. No network packets are sent.
+pub fn get_private_ip() -> Option<std::net::IpAddr> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    // Using Google DNS to trigger routing table lookup for outbound IPv4 traffic.
+    socket.connect("8.8.8.8:80").ok()?;
+    socket.local_addr().ok().map(|addr| addr.ip())
+}
+
+/// Get the primary local private IPv6 address.
+///
+/// This function queries the OS routing table by creating a connectionless
+/// UDP socket and connecting it to a public destination. No network packets are sent.
+pub fn get_private_ipv6() -> Option<std::net::IpAddr> {
+    let socket = std::net::UdpSocket::bind("[::]:0").ok()?;
+    // Using Google DNS IPv6 to trigger routing table lookup for outbound IPv6 traffic.
+    socket.connect("[2001:4860:4860::8888]:80").ok()?;
+    socket.local_addr().ok().map(|addr| addr.ip())
+}
