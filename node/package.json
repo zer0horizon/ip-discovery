@@ -1,7 +1,28 @@
 {
   "name": "@zer0horizon/ip-discovery",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Lightweight, high-performance library to discover your public IP address",
+  "license": "MIT OR Apache-2.0",
+  "author": "zer0horizon",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zer0horizon/ip-discovery.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zer0horizon/ip-discovery/issues"
+  },
+  "homepage": "https://github.com/zer0horizon/ip-discovery#readme",
+  "keywords": [
+    "ip",
+    "public-ip",
+    "private-ip",
+    "local-ip",
+    "dns",
+    "stun",
+    "http",
+    "napi",
+    "rust"
+  ],
   "main": "index.js",
   "types": "index.d.ts",
   "napi": {
