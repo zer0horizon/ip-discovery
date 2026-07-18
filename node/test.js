@@ -188,7 +188,7 @@ test('getIp with invalid options should reject with type error', async () => {
 test('getIp should reject with a timeout error if timeoutMs is too short', async () => {
   await assert.rejects(
     async () => {
-      await getIp({ timeoutMs: 1, strategy: Strategy.First });
+      await getIp({ timeoutMs: 0, strategy: Strategy.First });
     },
     /IP discovery failed/
   );
