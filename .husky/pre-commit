@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "=== Running pre-commit validation ==="
+npm run lint && npm run test

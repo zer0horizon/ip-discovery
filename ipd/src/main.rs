@@ -64,7 +64,7 @@ async fn main() -> ExitCode {
     if cli.private {
         let opt_ip = match (cli.ipv4, cli.ipv6) {
             (false, true) => ip_discovery::get_private_ipv6(),
-            _ => ip_discovery::get_private_ip().or_else(|| ip_discovery::get_private_ipv6()),
+            _ => ip_discovery::get_private_ip().or_else(ip_discovery::get_private_ipv6),
         };
 
         match opt_ip {

@@ -10,9 +10,46 @@ permissions:
   id-token: write
 
 jobs:
-  # Job 1: Build native Node.js binaries for all platforms
+  # Job 1: Verify code quality and run tests before anything else
+  verify:
+    name: Verify Code Quality (Clippy, Format, Tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: node/package-lock.json
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Verify Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy Lints
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run Rust Tests
+        run: cargo test --workspace
+
+      - name: Install Node Dependencies
+        run: npm ci
+        working-directory: node
+
+      - name: Run Node Tests
+        run: npm test
+        working-directory: node
+
+  # Job 2: Build native Node.js binaries for all platforms (gated by verify)
   build-node-bindings:
     name: Build Node Bindings - ${{ matrix.settings.target }}
+    needs: verify
     runs-on: ${{ matrix.settings.host }}
     strategy:
       fail-fast: false
@@ -57,10 +94,10 @@ jobs:
           path: node/*.node
           if-no-files-found: error
 
-  # Job 2: Publish packages to Crates.io and npm
+  # Job 3: Publish packages to Crates.io and npm (gated by verify and build-node-bindings)
   publish:
     name: Publish Releases
-    needs: build-node-bindings
+    needs: [verify, build-node-bindings]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

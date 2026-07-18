@@ -1,0 +1,13 @@
+{
+  "name": "ip-discovery-workspace",
+  "version": "0.4.0",
+  "private": true,
+  "scripts": {
+    "prepare": "husky",
+    "lint": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "test": "cargo test --workspace && npm --prefix node test"
+  },
+  "devDependencies": {
+    "husky": "^9.1.4"
+  }
+}
