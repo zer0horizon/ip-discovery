@@ -1,5 +1,6 @@
 [workspace]
 members = ["ipd"]
+resolver = "3"
 
 [package]
 name = "ip-discovery"
