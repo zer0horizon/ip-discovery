@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-07-19
+
+### Added
+
+- **NPM Package documentation:** Created a dedicated, Node.js-focused `README.md` for the `@zer0horizon/ip-discovery` package.
+
+### Fixed
+
+- **NPM Package metadata:** Included `LICENSE-MIT`, `LICENSE-APACHE`, author, homepage, and repository fields in the package distribution to fix missing details on npmjs.com.
+
+## [0.4.0] - 2026-07-18
+
+### Added
+
+- **Node.js Native Bindings:** Added `@zer0horizon/ip-discovery` npm package built using `napi-rs`, providing high-performance, type-safe bindings for JavaScript/TypeScript environments.
+- **Local Private IP Lookup:** Added support for synchronous, offline-friendly private IP address lookup (IPv4 and IPv6) via `get_private_ip()` / `get_private_ipv6()` in Rust, `getPrivateIp()` / `getPrivateIpv6()` in JS, and `-l` / `--private` in the CLI.
+- **Husky Pre-commit Hooks:** Added local pre-commit hooks to enforce formatting (`cargo fmt`), strict lints (`clippy`), and all unit tests locally.
+
+### Fixed
+
+- **CLI Private IP Formatting:** Extended the existing CLI formatting options (`-f json` and `-f verbose`) to support formatting local private IP output.
+- **macOS compilation support:** Configured `.cargo/config.toml` with macOS linker arguments (`-undefined dynamic_lookup`) to prevent dynamic library compilation errors when building Node bindings.
+- **MSRV resolver & HTTP/2 multiplexing:** Fixed CI builds by enabling MSRV-aware resolver and disabling HTTP/2 multiplexing.
+- **CI build issues:** Resolved CI build errors by compiling native Node bindings on the runner prior to running Javascript tests.
+- **Clippy lints:** Fixed redundant closure warnings in the CLI tool argument parsing.
+- **Test race conditions:** Fixed test runner timeout assertion failures on fast CI runners by using a guaranteed 0ms timeout.
+
 ## [0.3.0] - 2026-03-26
 
 ### Changed

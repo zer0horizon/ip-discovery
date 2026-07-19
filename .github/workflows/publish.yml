@@ -1,0 +1,185 @@
+name: Publish Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  # Job 1: Verify code quality and run tests before anything else
+  verify:
+    name: Verify Code Quality (Clippy, Format, Tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: node/package-lock.json
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Verify Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy Lints
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run Rust Tests
+        run: cargo test --workspace
+
+      - name: Install Node Dependencies
+        run: npm ci
+        working-directory: node
+
+      - name: Build Local Native Bindings for Testing
+        run: npm run build
+        working-directory: node
+
+      - name: Run Node Tests
+        run: npm test
+        working-directory: node
+
+  # Job 2: Build native Node.js binaries for all platforms (gated by verify)
+  build-node-bindings:
+    name: Build Node Bindings - ${{ matrix.settings.target }}
+    needs: verify
+    runs-on: ${{ matrix.settings.host }}
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - host: macos-latest
+            target: x86_64-apple-darwin
+          - host: macos-latest
+            target: aarch64-apple-darwin
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: node/package-lock.json
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.settings.target }}
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: node
+
+      - name: Build bindings
+        run: npx napi build --release --platform --target ${{ matrix.settings.target }}
+        working-directory: node
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.settings.target }}
+          path: node/*.node
+          if-no-files-found: error
+
+  # Job 3: Publish packages to Crates.io and npm (gated by verify and build-node-bindings)
+  publish:
+    name: Publish Releases
+    needs: [verify, build-node-bindings]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      # Download all pre-compiled native binaries
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: node/artifacts
+
+      # Move downloaded artifacts to node/ folder (where npm publish expects them)
+      - name: Move artifacts to build directory
+        run: |
+          find node/artifacts -name "*.node" -exec mv {} node/ \;
+          rm -rf node/artifacts
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # 1. Publish to Crates.io
+      - name: Publish to Crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          # Publish core library
+          echo "Publishing ip-discovery..."
+          status_lib=0
+          output_lib=$(cargo publish --package ip-discovery 2>&1) || status_lib=$?
+          if [ $status_lib -ne 0 ]; then
+            if echo "$output_lib" | grep -q -i "already exists"; then
+              echo "ip-discovery is already published. Skipping."
+            else
+              echo "$output_lib"
+              exit $status_lib
+            fi
+          else
+            echo "$output_lib"
+          fi
+
+          echo "Waiting 30 seconds for crates.io to index the library..."
+          sleep 30
+
+          # Publish CLI utility
+          echo "Publishing ipd..."
+          status_cli=0
+          output_cli=$(cargo publish --package ipd 2>&1) || status_cli=$?
+          if [ $status_cli -ne 0 ]; then
+            if echo "$output_cli" | grep -q -i "already exists"; then
+              echo "ipd is already published. Skipping."
+            else
+              echo "$output_cli"
+              exit $status_cli
+            fi
+          else
+            echo "$output_cli"
+          fi
+
+      # 2. Publish to npm
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          cd node
+          
+          # Dynamically extract package name and version
+          pkg_name=$(node -p "require('./package.json').name")
+          pkg_version=$(node -p "require('./package.json').version")
+          
+          echo "Checking if $pkg_name@$pkg_version already exists on npm registry..."
+          if npm view "$pkg_name@$pkg_version" version >/dev/null 2>&1; then
+            echo "Package $pkg_name@$pkg_version is already published. Skipping."
+          else
+            echo "Publishing $pkg_name@$pkg_version to npm..."
+            npm publish --access public
+          fi
